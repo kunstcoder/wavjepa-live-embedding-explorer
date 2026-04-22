@@ -9,6 +9,7 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 import torch
 
+from .audio import compute_rms_energy
 from .model_artifacts import (
     BASE_MODEL_REPO_ID,
     ResolvedModelArtifact,
@@ -114,7 +115,7 @@ class WavJEPAService:
             temporal_steps=int(frame_embeddings.shape[0]),
             embedding_dim=int(frame_embeddings.shape[1]),
             pooled_norm=float(np.linalg.norm(pooled_embedding)),
-            rms_energy=float(np.sqrt(np.mean(np.square(waveform)))),
+            rms_energy=compute_rms_energy(waveform),
         )
 
 
