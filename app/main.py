@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 import numpy as np
 
-from .services.audio import load_audio_from_bytes
+from .services.audio import compute_rms_energy, load_audio_from_bytes
 from .services.live_sessions import LiveSessionStore
 from .services.wavjepa import (
     WavJEPAService,
@@ -19,6 +19,8 @@ from .services.wavjepa import (
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
+DEFAULT_LIVE_MIN_RMS_DBFS = float(os.environ.get("WAVJEPA_LIVE_MIN_RMS_DBFS", "-45.0"))
+DEFAULT_LIVE_MIN_RMS_ENERGY = 10 ** (DEFAULT_LIVE_MIN_RMS_DBFS / 20.0)
 
 app = FastAPI(
     title="WavJEPA Embedding Explorer",
@@ -134,9 +136,13 @@ async def push_live_chunk(
     dimensions: int = Form(2),
     chunk_index: int = Form(0),
     elapsed_seconds: float = Form(0.0),
+    min_rms_energy: float = Form(DEFAULT_LIVE_MIN_RMS_ENERGY),
 ) -> dict[str, object]:
     if dimensions not in {2, 3}:
         raise HTTPException(status_code=400, detail="dimensions must be 2 or 3")
+
+    if min_rms_energy < 0:
+        raise HTTPException(status_code=400, detail="min_rms_energy must be non-negative")
 
     payload = await file.read()
 
@@ -145,6 +151,22 @@ async def push_live_chunk(
 
     try:
         sample = load_audio_from_bytes(payload)
+        rms_energy = compute_rms_energy(sample.waveform)
+
+        if rms_energy < min_rms_energy:
+            return {
+                "live": True,
+                "sessionId": session_id,
+                "accepted": False,
+                "skipped": True,
+                "skipReason": "low_rms",
+                "pointCount": live_sessions.point_count(session_id),
+                "chunkIndex": chunk_index,
+                "elapsedSeconds": round(elapsed_seconds, 3),
+                "rmsEnergy": round(rms_energy, 6),
+                "minRmsEnergy": round(min_rms_energy, 6),
+            }
+
         summary = service.embed_waveform(sample.waveform)
         response = live_sessions.append_chunk(
             session_id=session_id,
@@ -157,6 +179,9 @@ async def push_live_chunk(
             chunk_index=chunk_index,
             model_metadata=service.describe_artifact(),
         )
+        response["accepted"] = True
+        response["skipped"] = False
+        response["minRmsEnergy"] = round(min_rms_energy, 6)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Live session not found.") from exc
     except Exception as exc:  # pragma: no cover - runtime failures depend on local env.

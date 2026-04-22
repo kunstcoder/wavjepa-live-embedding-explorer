@@ -20,6 +20,13 @@ class AudioSample:
     duration_seconds: float
 
 
+def compute_rms_energy(waveform: np.ndarray) -> float:
+    if waveform.size == 0:
+        return 0.0
+
+    return float(np.sqrt(np.mean(np.square(waveform))))
+
+
 def load_audio_from_bytes(raw_bytes: bytes, target_sample_rate: int = TARGET_SAMPLE_RATE) -> AudioSample:
     if not raw_bytes:
         raise ValueError("Empty audio payload.")
@@ -51,4 +58,3 @@ def load_audio_from_bytes(raw_bytes: bytes, target_sample_rate: int = TARGET_SAM
         target_sample_rate=target_sample_rate,
         duration_seconds=duration_seconds,
     )
-
