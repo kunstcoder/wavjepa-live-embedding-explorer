@@ -96,6 +96,26 @@
               </select>
             </div>
 
+            <div class="field">
+              <label for="levelGateSlider">실시간 입력 게이트</label>
+              <input
+                id="levelGateSlider"
+                class="range-input"
+                type="range"
+                min="-60"
+                max="-24"
+                step="1"
+                value="-45"
+              />
+              <div class="range-meta">
+                <strong id="levelGateValue">-45 dBFS · RMS 0.0056</strong>
+                <span>값을 높일수록 더 큰 소리만 통과합니다.</span>
+              </div>
+              <p class="field-note">
+                너무 작은 청크는 임베딩과 trajectory에 추가하지 않습니다.
+              </p>
+            </div>
+
             <div class="button-row">
               <button id="micButton" class="secondary-button" type="button">
                 마이크 시작

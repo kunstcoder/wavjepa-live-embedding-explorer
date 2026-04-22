@@ -214,6 +214,7 @@ h1 {
 }
 
 select,
+.range-input,
 .action-button,
 .secondary-button,
 .ghost-button {
@@ -228,6 +229,62 @@ select {
   background: rgba(255, 255, 255, 0.82);
   box-shadow: inset 0 0 0 1px var(--line);
   color: var(--ink);
+}
+
+.range-input {
+  height: 42px;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  appearance: none;
+}
+
+.range-input::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(23, 108, 104, 0.25), rgba(230, 111, 50, 0.5));
+}
+
+.range-input::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -5px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--accent), #f59c57);
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  box-shadow: 0 8px 18px rgba(230, 111, 50, 0.24);
+}
+
+.range-input::-moz-range-track {
+  height: 8px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(23, 108, 104, 0.25), rgba(230, 111, 50, 0.5));
+}
+
+.range-input::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--accent), #f59c57);
+  box-shadow: 0 8px 18px rgba(230, 111, 50, 0.24);
+}
+
+.range-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: baseline;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.range-meta strong {
+  color: var(--ink);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.84rem;
 }
 
 .action-button {

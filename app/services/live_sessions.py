@@ -49,6 +49,13 @@ class LiveSessionStore:
 
             del self._sessions[session_id]
 
+    def point_count(self, session_id: str) -> int:
+        with self._lock:
+            if session_id not in self._sessions:
+                raise KeyError(session_id)
+
+            return len(self._sessions[session_id].points)
+
     def append_chunk(
         self,
         session_id: str,

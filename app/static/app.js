@@ -14,6 +14,7 @@ function createLiveState() {
     sentSamples: 0,
     flushTimer: null,
     requestInFlight: false,
+    skippedChunks: 0,
   };
 }
 
@@ -46,6 +47,8 @@ const elements = {
   fileInput: document.getElementById("fileInput"),
   fileList: document.getElementById("fileList"),
   fileMetric: document.getElementById("fileMetric"),
+  levelGateSlider: document.getElementById("levelGateSlider"),
+  levelGateValue: document.getElementById("levelGateValue"),
   liveBadge: document.getElementById("liveBadge"),
   micButton: document.getElementById("micButton"),
   methodSelect: document.getElementById("methodSelect"),
@@ -71,6 +74,32 @@ function syncFileMetric() {
 
 function getColor(index) {
   return palette[index % palette.length];
+}
+
+function dbfsToAmplitude(dbfs) {
+  return 10 ** (dbfs / 20);
+}
+
+function formatRms(value) {
+  if (!Number.isFinite(value)) {
+    return "-";
+  }
+
+  if (value >= 0.1) {
+    return value.toFixed(3);
+  }
+
+  if (value >= 0.01) {
+    return value.toFixed(4);
+  }
+
+  return value.toFixed(6);
+}
+
+function syncLevelGateUI() {
+  const dbfs = Number(elements.levelGateSlider.value);
+  const rms = dbfsToAmplitude(dbfs);
+  elements.levelGateValue.textContent = `${dbfs.toFixed(0)} dBFS · RMS ${formatRms(rms)}`;
 }
 
 function escapeHtml(value) {
@@ -344,6 +373,10 @@ function getLiveChunkSampleCount() {
   return Math.floor(state.live.sampleRate * getLiveChunkSeconds());
 }
 
+function getLiveMinRmsEnergy() {
+  return dbfsToAmplitude(Number(elements.levelGateSlider.value));
+}
+
 function pushAudioBuffer(buffer) {
   if (!state.live.active || !buffer.length) {
     return;
@@ -488,11 +521,15 @@ async function startMicrophone() {
       sentSamples: 0,
       flushTimer: window.setInterval(flushLiveChunk, 250),
       requestInFlight: false,
+      skippedChunks: 0,
     };
 
     elements.micButton.textContent = "마이크 중지";
     setLiveBadge("mic on · buffering", "live");
-    setStatus("마이크 입력을 수집 중입니다. 첫 청크가 쌓이면 시각화가 시작됩니다.", "busy");
+    setStatus(
+      `마이크 입력을 수집 중입니다. ${elements.levelGateSlider.value} dBFS보다 작은 청크는 제외합니다.`,
+      "busy",
+    );
   } catch (error) {
     console.error(error);
     await deleteLiveSession(sessionId);
@@ -568,6 +605,7 @@ async function flushLiveChunk() {
     formData.append("dimensions", elements.dimensionSelect.value);
     formData.append("chunk_index", String(chunkIndex));
     formData.append("elapsed_seconds", elapsedSeconds.toFixed(3));
+    formData.append("min_rms_energy", getLiveMinRmsEnergy().toFixed(8));
 
     const response = await fetch(`/api/live-sessions/${sessionId}/chunks`, {
       method: "POST",
@@ -583,10 +621,25 @@ async function flushLiveChunk() {
       throw new Error(payload.detail || "Failed to process live audio chunk.");
     }
 
+    if (payload.skipped) {
+      state.live.skippedChunks += 1;
+
+      const skippedPointCount = Number.isFinite(payload.pointCount) ? payload.pointCount : 0;
+      const badgeSuffix = state.live.skippedChunks ? ` · ${state.live.skippedChunks} skip` : "";
+
+      setLiveBadge(`mic on · ${skippedPointCount} pts${badgeSuffix}`, "live");
+      setStatus(
+        `낮은 레벨 청크를 제외했습니다. rms=${formatRms(payload.rmsEnergy)} < threshold=${formatRms(payload.minRmsEnergy)}`,
+        "busy",
+      );
+      return;
+    }
+
     state.response = payload;
+    const badgeSuffix = state.live.skippedChunks ? ` · ${state.live.skippedChunks} skip` : "";
     renderPlot();
     renderFileList();
-    setLiveBadge(`mic on · ${payload.pointCount} pts`, "live");
+    setLiveBadge(`mic on · ${payload.pointCount} pts${badgeSuffix}`, "live");
     setStatus(`실시간 업데이트: ${payload.pointCount}개 청크 누적`, "ready");
   } catch (error) {
     console.error(error);
@@ -653,9 +706,11 @@ async function analyze() {
 elements.analyzeButton.addEventListener("click", analyze);
 elements.micButton.addEventListener("click", startMicrophone);
 elements.clearLiveButton.addEventListener("click", clearLiveCapture);
+elements.levelGateSlider.addEventListener("input", syncLevelGateUI);
 
 attachDropzone();
 syncFileMetric();
+syncLevelGateUI();
 renderFileList();
 setLiveBadge("mic off", "idle");
 fetchHealth();
