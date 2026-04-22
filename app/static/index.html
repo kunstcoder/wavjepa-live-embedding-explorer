@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WavJEPA Embedding Explorer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" defer></script>
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <div class="page-glow page-glow-left"></div>
+    <div class="page-glow page-glow-right"></div>
+
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Audio Foundation Model Explorer</p>
+          <h1>WavJEPA 임베딩을 2D/3D 공간으로 펼쳐보기</h1>
+          <p class="hero-copy">
+            `labhamlet/wavjepa-base`를 로컬에 내려받아 오디오 특징을 추출하고,
+            mean pooled embedding을 PCA 또는 t-SNE로 축소해 시각화합니다.
+          </p>
+        </div>
+        <div class="hero-meta">
+          <div class="pill">Model: WavJEPA Base</div>
+          <div class="pill">Input: 16kHz Mono</div>
+          <div class="pill">Output: 768-d pooled vector</div>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <aside class="panel controls">
+          <div class="panel-header">
+            <h2>분석 설정</h2>
+            <p>첫 추론 시 모델 스냅샷을 `models/` 아래로 다운로드합니다.</p>
+          </div>
+
+          <div
+            id="dropzone"
+            class="dropzone"
+            tabindex="0"
+            role="button"
+            aria-label="오디오 파일 업로드"
+          >
+            <input id="fileInput" type="file" accept="audio/*" multiple hidden />
+            <strong>오디오 파일을 드래그하거나 클릭</strong>
+            <span>WAV, FLAC, OGG, MP3 등 libsndfile이 읽을 수 있는 형식</span>
+          </div>
+
+          <div class="field">
+            <label for="methodSelect">차원 축소 방식</label>
+            <select id="methodSelect">
+              <option value="pca">PCA</option>
+              <option value="tsne">t-SNE</option>
+            </select>
+            <p class="field-note">배치 업로드 분석에 사용됩니다.</p>
+          </div>
+
+          <div class="field">
+            <label for="dimensionSelect">시각화 차원</label>
+            <select id="dimensionSelect">
+              <option value="2">2D</option>
+              <option value="3">3D</option>
+            </select>
+          </div>
+
+          <button id="analyzeButton" class="action-button" type="button">
+            임베딩 추출 및 시각화
+          </button>
+
+          <div class="live-section">
+            <div class="section-divider">
+              <span>Realtime Microphone</span>
+            </div>
+
+            <p class="live-copy">
+              실시간 모드는 안정성을 위해 PCA로 고정됩니다. 마이크 입력을 짧은
+              청크로 잘라 누적 trajectory를 2D/3D 공간에 그립니다.
+            </p>
+
+            <div class="field">
+              <label for="chunkDurationSelect">마이크 청크 길이</label>
+              <select id="chunkDurationSelect">
+                <option value="1">1.0초</option>
+                <option value="1.5" selected>1.5초</option>
+                <option value="2">2.0초</option>
+                <option value="3">3.0초</option>
+              </select>
+            </div>
+
+            <div class="button-row">
+              <button id="micButton" class="secondary-button" type="button">
+                마이크 시작
+              </button>
+              <button id="clearLiveButton" class="ghost-button" type="button">
+                실시간 초기화
+              </button>
+            </div>
+
+            <div id="liveBadge" class="live-badge idle">mic off</div>
+          </div>
+
+          <div id="statusCard" class="status-card idle">
+            서버 상태를 확인하는 중...
+          </div>
+
+          <div class="metric-grid">
+            <div class="metric-card">
+              <span>Device</span>
+              <strong id="deviceMetric">-</strong>
+            </div>
+            <div class="metric-card">
+              <span>Model Cache</span>
+              <strong id="cacheMetric">-</strong>
+            </div>
+            <div class="metric-card">
+              <span>Files</span>
+              <strong id="fileMetric">0</strong>
+            </div>
+            <div class="metric-card">
+              <span>Projection</span>
+              <strong id="projectionMetric">-</strong>
+            </div>
+          </div>
+        </aside>
+
+        <section class="panel visualizer">
+          <div class="panel-header">
+            <h2>Embedding Map</h2>
+            <p id="plotSummary">분석할 파일을 업로드하면 산점도를 렌더링합니다.</p>
+          </div>
+          <div id="plot" class="plot-frame"></div>
+        </section>
+      </section>
+
+      <section class="panel table-panel">
+        <div class="panel-header">
+          <h2>포인트 메타데이터</h2>
+          <p>각 오디오별 pooled embedding 요약입니다.</p>
+        </div>
+        <div id="fileList" class="file-list empty">
+          아직 선택된 파일이 없습니다.
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
