@@ -427,6 +427,12 @@ async function startMicrophone() {
     return;
   }
 
+  if (!window.isSecureContext) {
+    setStatus("원격 브라우저 마이크는 HTTPS 또는 localhost에서만 허용됩니다.", "error");
+    setLiveBadge("https required", "error");
+    return;
+  }
+
   if (!navigator.mediaDevices?.getUserMedia) {
     setStatus("이 브라우저는 마이크 스트리밍을 지원하지 않습니다.", "error");
     setLiveBadge("mic unsupported", "error");

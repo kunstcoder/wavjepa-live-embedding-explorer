@@ -1,35 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import importlib
-import importlib.util
-import os
-from pathlib import Path
-import sys
 from threading import RLock
 from typing import Any
 
-from huggingface_hub import snapshot_download
 import numpy as np
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 import torch
 
-
-HF_CACHE_DIR = Path(__file__).resolve().parents[2] / ".hf_cache"
-HF_HUB_CACHE_DIR = HF_CACHE_DIR / "hub"
-
-HF_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-HF_HUB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-os.environ.setdefault("HF_HOME", str(HF_CACHE_DIR))
-os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(HF_HUB_CACHE_DIR))
-
-
-MODEL_REPO_ID = "labhamlet/wavjepa-base"
-MODEL_REVISION = "main"
-MODEL_DIR = Path(__file__).resolve().parents[2] / "models" / "wavjepa-base"
-MODEL_PACKAGE_NAME = "local_wavjepa_base"
+from .model_artifacts import (
+    BASE_MODEL_REPO_ID,
+    ResolvedModelArtifact,
+    load_local_model_classes,
+    resolved_model_artifact,
+)
 
 
 def detect_device() -> str:
@@ -56,35 +41,26 @@ class WavJEPAService:
         self.device = detect_device()
         self._feature_extractor = None
         self._model = None
+        self._resolved_artifact: ResolvedModelArtifact | None = None
         self._lock = RLock()
 
     def is_snapshot_available(self) -> bool:
-        return (MODEL_DIR / "model.safetensors").exists()
+        try:
+            artifact = resolved_model_artifact()
+        except FileNotFoundError:
+            return False
 
-    def ensure_snapshot(self) -> Path:
-        if self.is_snapshot_available():
-            return MODEL_DIR
+        return (artifact.model_dir / "model.safetensors").exists() or (
+            artifact.model_dir / "pytorch_model.bin"
+        ).exists()
 
+    def ensure_model_artifact(self) -> ResolvedModelArtifact:
         with self._lock:
-            if self.is_snapshot_available():
-                return MODEL_DIR
+            if self._resolved_artifact is not None:
+                return self._resolved_artifact
 
-            MODEL_DIR.mkdir(parents=True, exist_ok=True)
-
-            snapshot_download(
-                repo_id=MODEL_REPO_ID,
-                revision=MODEL_REVISION,
-                local_dir=MODEL_DIR,
-                cache_dir=str(HF_HUB_CACHE_DIR),
-                allow_patterns=[
-                    "*.json",
-                    "*.md",
-                    "*.py",
-                    "*.safetensors",
-                ],
-            )
-
-        return MODEL_DIR
+            self._resolved_artifact = resolved_model_artifact()
+            return self._resolved_artifact
 
     def load(self) -> None:
         if self._model is not None and self._feature_extractor is not None:
@@ -94,8 +70,9 @@ class WavJEPAService:
             if self._model is not None and self._feature_extractor is not None:
                 return
 
-            model_path = str(self.ensure_snapshot())
-            feature_extractor_class, config_class, model_class = load_local_model_classes()
+            artifact = self.ensure_model_artifact()
+            model_path = str(artifact.model_dir)
+            feature_extractor_class, config_class, model_class = load_local_model_classes(artifact.model_dir)
             config = config_class.from_pretrained(model_path)
             self._feature_extractor = feature_extractor_class.from_pretrained(model_path)
             self._model = model_class.from_pretrained(
@@ -105,6 +82,16 @@ class WavJEPAService:
             )
             self._model.to(self.device)
             self._model.eval()
+
+    def describe_artifact(self) -> dict[str, Any]:
+        artifact = self.ensure_model_artifact()
+        return {
+            "repoId": BASE_MODEL_REPO_ID,
+            "sourcePath": str(artifact.source_path),
+            "localPath": str(artifact.model_dir),
+            "format": artifact.format,
+            "converted": artifact.converted,
+        }
 
     @torch.inference_mode()
     def embed_waveform(self, waveform: np.ndarray) -> EmbeddingSummary:
@@ -179,37 +166,6 @@ def serialize_vector(vector: np.ndarray) -> list[float]:
     return [float(value) for value in vector.tolist()]
 
 
-def load_local_model_classes() -> tuple[type[Any], type[Any], type[Any]]:
-    if MODEL_PACKAGE_NAME not in sys.modules:
-        init_path = MODEL_DIR / "__init__.py"
-
-        if not init_path.exists():
-            init_path.write_text("", encoding="utf-8")
-
-        spec = importlib.util.spec_from_file_location(
-            MODEL_PACKAGE_NAME,
-            init_path,
-            submodule_search_locations=[str(MODEL_DIR)],
-        )
-
-        if spec is None or spec.loader is None:
-            raise ImportError(f"Failed to create import spec for {MODEL_DIR}")
-
-        package = importlib.util.module_from_spec(spec)
-        sys.modules[MODEL_PACKAGE_NAME] = package
-        spec.loader.exec_module(package)
-
-    feature_module = importlib.import_module(f"{MODEL_PACKAGE_NAME}.feature_extraction_wavjepa")
-    config_module = importlib.import_module(f"{MODEL_PACKAGE_NAME}.configuration_wavjepa")
-    model_module = importlib.import_module(f"{MODEL_PACKAGE_NAME}.modeling_wavjepa")
-
-    return (
-        feature_module.WavJEPAFeatureExtractor,
-        config_module.WavJEPAConfig,
-        model_module.WavJEPAModel,
-    )
-
-
 def build_projection_response(
     filenames: list[str],
     summaries: list[EmbeddingSummary],
@@ -220,6 +176,7 @@ def build_projection_response(
     durations: list[float],
     sample_rates: list[int],
     extra_fields: list[dict[str, Any]] | None = None,
+    model_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     points = []
 
@@ -249,8 +206,16 @@ def build_projection_response(
         "dimensions": dimensions,
         "pointCount": len(points),
         "points": points,
-        "model": {
-            "repoId": MODEL_REPO_ID,
-            "localPath": str(MODEL_DIR),
-        },
+        "model": model_metadata if model_metadata is not None else service_model_metadata(),
+    }
+
+
+def service_model_metadata() -> dict[str, Any]:
+    artifact = resolved_model_artifact()
+    return {
+        "repoId": BASE_MODEL_REPO_ID,
+        "sourcePath": str(artifact.source_path),
+        "localPath": str(artifact.model_dir),
+        "format": artifact.format,
+        "converted": artifact.converted,
     }

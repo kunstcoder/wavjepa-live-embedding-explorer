@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -37,10 +38,18 @@ async def index() -> FileResponse:
 
 @app.get("/api/health")
 async def health() -> dict[str, object]:
+    model_info: dict[str, object] | None = None
+
+    try:
+        model_info = service.describe_artifact()
+    except FileNotFoundError:
+        model_info = None
+
     return {
         "status": "ok",
         "device": service.device,
         "modelCached": service.is_snapshot_available(),
+        "model": model_info,
     }
 
 
@@ -96,6 +105,7 @@ async def create_embeddings(
         dimensions=dimensions,
         durations=durations,
         sample_rates=sample_rates,
+        model_metadata=service.describe_artifact(),
     )
 
 
@@ -145,6 +155,7 @@ async def push_live_chunk(
             dimensions=dimensions,
             elapsed_seconds=elapsed_seconds,
             chunk_index=chunk_index,
+            model_metadata=service.describe_artifact(),
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Live session not found.") from exc
@@ -152,3 +163,35 @@ async def push_live_chunk(
         raise HTTPException(status_code=500, detail=f"Failed to process live chunk: {exc}") from exc
 
     return response
+
+
+def parse_env_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+
+    if value is None:
+        return default
+
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def run() -> None:
+    import uvicorn
+
+    host = os.environ.get("WAVJEPA_HOST", "0.0.0.0")
+    port = int(os.environ.get("WAVJEPA_PORT", "8000"))
+    reload_enabled = parse_env_flag("WAVJEPA_RELOAD", default=False)
+    ssl_certfile = os.environ.get("WAVJEPA_SSL_CERTFILE")
+    ssl_keyfile = os.environ.get("WAVJEPA_SSL_KEYFILE")
+
+    uvicorn.run(
+        "app.main:app" if reload_enabled else app,
+        host=host,
+        port=port,
+        reload=reload_enabled,
+        ssl_certfile=ssl_certfile,
+        ssl_keyfile=ssl_keyfile,
+    )
+
+
+if __name__ == "__main__":
+    run()

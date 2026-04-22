@@ -59,6 +59,7 @@ class LiveSessionStore:
         dimensions: int,
         elapsed_seconds: float,
         chunk_index: int,
+        model_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         with self._lock:
             if session_id not in self._sessions:
@@ -103,6 +104,7 @@ class LiveSessionStore:
                     }
                     for point in session.points
                 ],
+                model_metadata=model_metadata,
             )
 
         response["live"] = True
