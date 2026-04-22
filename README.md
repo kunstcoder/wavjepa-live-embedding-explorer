@@ -83,3 +83,55 @@ uvicorn app.main:app --reload
 - 업로드 분석은 PCA 또는 t-SNE를 선택할 수 있고, 마이크 실시간 모드는 안정성을 위해 PCA로 고정됩니다.
 - 마이크 기능은 브라우저 권한이 필요하며 `localhost` 또는 로컬 주소에서 실행해야 합니다.
 - 로컬 머신에서 CPU만 사용할 경우 첫 추론과 다중 파일 처리 시간이 길 수 있습니다.
+
+## kNN 평가
+
+Audio-JEPA 논문/X-ARES 스타일에 맞춰, `train`/`test` split의 오디오를 `WavJEPA` encoder로 임베딩한 뒤 mean pooling한 clip embedding으로 weighted `kNN` 평가를 돌릴 수 있습니다.
+
+기본 폴더 구조는 다음을 가정합니다.
+
+```text
+dataset_root/
+  train/
+    sample_000.wav
+    sample_000.json
+  test/
+    sample_100.wav
+    sample_100.json
+```
+
+- 각 `wav` 파일 옆에 같은 basename의 `json` 파일이 있어야 합니다.
+- 기본적으로 JSON의 top-level `label`, `class`, `category`, `genre`, `instrument` 같은 키를 자동 탐색합니다.
+- 라벨 키가 중첩돼 있으면 `--label-key metadata.label` 같은 식으로 지정하면 됩니다.
+- 현재 스크립트는 단일 라벨 clip classification 용도입니다.
+
+실행 예시:
+
+```bash
+./.venv/bin/python scripts/eval_knn.py /absolute/path/to/ESC50
+```
+
+여러 데이터셋을 한 번에 평가:
+
+```bash
+./.venv/bin/python scripts/eval_knn.py /absolute/path/to/xares_datasets
+```
+
+위 경로가 `train`/`test`를 바로 가지지 않으면, 바로 아래 자식 디렉터리들 중 `train`/`test`를 가진 폴더를 자동으로 찾아 평가합니다.
+
+라벨 키를 명시하고 JSON 리포트를 저장하려면:
+
+```bash
+./.venv/bin/python scripts/eval_knn.py \
+  /absolute/path/to/GTZAN \
+  --label-key label \
+  --output-json /absolute/path/to/results/gtzan_knn.json
+```
+
+주요 옵션:
+
+- `--k`: 최근접 이웃 수. 기본값 `10`
+- `--temperature`: 유사도 가중치 softmax temperature. 기본값 `0.07`
+- `--batch-size`: test embedding의 kNN 점수 계산 배치 크기
+- `--limit-per-split`: 디버깅용 소규모 subset 실행
+- `--model-source`: HF 디렉터리나 `.ckpt/.pt/.pth/.bin` 체크포인트 직접 지정
