@@ -477,6 +477,43 @@ select {
   display: block;
 }
 
+.plot-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-top: 10px;
+}
+
+.plot-legend[hidden] {
+  display: none;
+}
+
+.plot-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.plot-legend-line {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 3px;
+  border-radius: 999px;
+}
+
+.plot-legend-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(31, 30, 23, 0.24);
+}
+
 .table-panel {
   margin-top: 20px;
 }
@@ -518,6 +555,22 @@ select {
   height: 14px;
   border-radius: 999px;
   flex: none;
+}
+
+.model-color-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  justify-content: flex-end;
+}
+
+.model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text);
 }
 
 .file-meta {

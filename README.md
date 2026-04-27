@@ -43,7 +43,9 @@ WAVJEPA_HOST=0.0.0.0 WAVJEPA_PORT=8000 python -m app.main
 
 - `WavJEPA`: 기존 waveform 기반 `labhamlet/wavjepa-base` 단일 시각화
 - `Audio-JEPA`: spectrogram 기반 `ltuncay/Audio-JEPA` 단일 시각화
-- `Compare`: 같은 업로드 파일을 두 모델로 각각 임베딩해 두 plot을 나란히 렌더링
+- `Compare`: 같은 업로드 파일을 두 모델로 각각 임베딩한 뒤 모델별 projection 좌표를 같은 display scale로 정규화해 색상 포인트와 라인으로 렌더링
+
+마이크 실시간 모드에서도 `분석 모델` 선택을 따릅니다. `Compare`를 선택하고 마이크를 시작하면 같은 live chunk를 WavJEPA와 Audio-JEPA에 동시에 넣어 두 trajectory를 함께 갱신합니다.
 
 Audio-JEPA는 첫 사용 시 `models/audio-jepa/JEPA.ckpt`로 checkpoint를 내려받습니다. 직접 받은 checkpoint를 쓰려면 다음 환경변수를 지정하면 됩니다.
 
@@ -107,7 +109,7 @@ uvicorn app.main:app --reload
 - `.ckpt` 변환은 `labhamlet/wavjepa`의 HEAR 추론 코드 패턴을 참고해 `state_dict`를 정규화합니다.
 - 체크포인트에 optimizer/scheduler state가 섞여 있어도 추론에 필요한 tensor weight만 추려서 변환합니다.
 - 시각화 좌표는 원본 768차원 pooled embedding이 아니라 축소된 좌표입니다.
-- 업로드 분석은 PCA 또는 t-SNE를 선택할 수 있고, 마이크 실시간 모드는 안정성을 위해 PCA로 고정됩니다.
+- 업로드 분석은 PCA 또는 t-SNE를 선택할 수 있고, 마이크 실시간 모드는 선택한 분석 모델을 사용하되 projection은 안정성을 위해 PCA로 고정됩니다.
 - 마이크 기능은 브라우저 권한이 필요하며 `localhost` 또는 로컬 주소에서 실행해야 합니다.
 - 로컬 머신에서 CPU만 사용할 경우 첫 추론과 다중 파일 처리 시간이 길 수 있습니다.
 

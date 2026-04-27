@@ -15,6 +15,7 @@ function createLiveState() {
     flushTimer: null,
     requestInFlight: false,
     skippedChunks: 0,
+    modelMode: "wavjepa",
   };
 }
 
@@ -36,6 +37,31 @@ const palette = [
   "#9f5c1d",
 ];
 
+const modelPalette = {
+  wavjepa: {
+    label: "WavJEPA",
+    color: "#e66f32",
+    lineColor: "rgba(230, 111, 50, 0.86)",
+    lineDash: "solid",
+    lineWidth2d: 7,
+    lineWidth3d: 7,
+    markerSize2d: 15,
+    markerSize3d: 8,
+    symbol: "circle",
+  },
+  audioJepa: {
+    label: "Audio-JEPA",
+    color: "#176c68",
+    lineColor: "rgba(23, 108, 104, 0.86)",
+    lineDash: "dash",
+    lineWidth2d: 4,
+    lineWidth3d: 5,
+    markerSize2d: 10,
+    markerSize3d: 6,
+    symbol: "diamond",
+  },
+};
+
 const elements = {
   analyzeButton: document.getElementById("analyzeButton"),
   cacheMetric: document.getElementById("cacheMetric"),
@@ -56,6 +82,7 @@ const elements = {
   comparePlot: document.getElementById("comparePlot"),
   plot: document.getElementById("plot"),
   plotGrid: document.getElementById("plotGrid"),
+  plotLegend: document.getElementById("plotLegend"),
   plotSummary: document.getElementById("plotSummary"),
   projectionMetric: document.getElementById("projectionMetric"),
   statusCard: document.getElementById("statusCard"),
@@ -77,6 +104,10 @@ function syncFileMetric() {
 
 function getColor(index) {
   return palette[index % palette.length];
+}
+
+function getModelStyle(modelKey) {
+  return modelPalette[modelKey] || modelPalette.wavjepa;
 }
 
 function dbfsToAmplitude(dbfs) {
@@ -117,6 +148,7 @@ function escapeHtml(value) {
 function resetProjectionView() {
   state.response = null;
   elements.plotSummary.textContent = "분석할 파일을 업로드하면 산점도를 렌더링합니다.";
+  hidePlotLegend();
   elements.projectionMetric.textContent = "-";
 
   if (window.Plotly) {
@@ -154,6 +186,31 @@ function formatCoordinates(point) {
   return point.coordinates.map((value) => value.toFixed(3)).join(", ");
 }
 
+function hidePlotLegend() {
+  elements.plotLegend.hidden = true;
+  elements.plotLegend.innerHTML = "";
+}
+
+function renderCompareLegend() {
+  const modelKeys = ["wavjepa", "audioJepa"];
+
+  elements.plotLegend.hidden = false;
+  elements.plotLegend.innerHTML = modelKeys
+    .map((modelKey) => {
+      const style = getModelStyle(modelKey);
+
+      return `
+        <span class="plot-legend-item">
+          <span class="plot-legend-line" style="background:${style.lineColor}">
+            <span class="plot-legend-dot" style="background:${style.color}"></span>
+          </span>
+          ${style.label}
+        </span>
+      `;
+    })
+    .join("");
+}
+
 function renderFileList() {
   if (!state.files.length && !state.response) {
     elements.fileList.className = "file-list empty";
@@ -176,12 +233,27 @@ function renderFileList() {
     elements.fileList.innerHTML = wavPoints
       .map((point, index) => {
         const audioPoint = audioPoints[index];
+        const wavStyle = getModelStyle("wavjepa");
+        const audioStyle = getModelStyle("audioJepa");
+        const liveMeta =
+          point.mode === "live"
+            ? `<span>t=${Number(point.elapsedSeconds).toFixed(1)}s</span><span>chunk=${point.chunkIndex}</span>`
+            : "";
 
         return `
           <article class="file-item">
             <div class="file-header">
               <strong>${escapeHtml(point.label)}</strong>
-              <span class="color-chip" style="background:${getColor(index)}"></span>
+              <div class="model-color-chips">
+                <span class="model-chip">
+                  <span class="color-chip" style="background:${wavStyle.color}"></span>
+                  ${wavStyle.label}
+                </span>
+                <span class="model-chip">
+                  <span class="color-chip" style="background:${audioStyle.color}"></span>
+                  ${audioStyle.label}
+                </span>
+              </div>
             </div>
             <div class="file-meta">
               <span>WavJEPA coords=${formatCoordinates(point)}</span>
@@ -191,6 +263,7 @@ function renderFileList() {
               <span>Audio-JEPA steps=${audioPoint.temporalSteps}</span>
               <span>Audio-JEPA norm=${audioPoint.pooledNorm}</span>
               <span>duration=${point.durationSeconds}s</span>
+              ${liveMeta}
             </div>
           </article>
         `;
@@ -284,12 +357,79 @@ function buildTrace(points, dimensions, isLive) {
   };
 }
 
-function buildPlotLayout(dimensions, title) {
+function buildCompareTrace(points, dimensions, modelKey) {
+  const style = getModelStyle(modelKey);
+  const coordinateHover =
+    dimensions === 3
+      ? "x=%{x:.3f}<br>y=%{y:.3f}<br>z=%{z:.3f}"
+      : "x=%{x:.3f}<br>y=%{y:.3f}";
+  const commonTrace = {
+    mode: "lines+markers",
+    name: style.label,
+    showlegend: true,
+    legendgroup: modelKey,
+    x: points.map((point) => point.coordinates[0]),
+    y: points.map((point) => point.coordinates[1]),
+    text: points.map((point) => point.label),
+    customdata: points.map((point) => [
+      point.temporalSteps,
+      point.pooledNorm,
+      point.durationSeconds,
+    ]),
+    hovertemplate:
+      `<b>${style.label}</b><br>%{text}<br>${coordinateHover}` +
+      "<br>steps=%{customdata[0]}<br>norm=%{customdata[1]:.4f}<extra></extra>",
+    marker: {
+      size: dimensions === 3 ? style.markerSize3d : style.markerSize2d,
+      color: style.color,
+      opacity: 0.92,
+      symbol: style.symbol,
+      line: {
+        width: 1,
+        color: "rgba(31, 30, 23, 0.22)",
+      },
+    },
+    line: {
+      color: style.lineColor,
+      width: dimensions === 3 ? style.lineWidth3d : style.lineWidth2d,
+      dash: style.lineDash,
+    },
+  };
+
+  if (dimensions === 3) {
+    return {
+      ...commonTrace,
+      type: "scatter3d",
+      z: points.map((point) => point.coordinates[2]),
+    };
+  }
+
+  return {
+    ...commonTrace,
+    type: "scatter",
+  };
+}
+
+function buildPlotLayout(dimensions, title, options = {}) {
+  const showLegend = Boolean(options.showLegend);
+  const legend = showLegend
+    ? {
+        orientation: "h",
+        x: 1,
+        xanchor: "right",
+        y: 1,
+        yanchor: "top",
+        bgcolor: "rgba(255,255,255,0.74)",
+        bordercolor: "rgba(31,30,23,0.12)",
+        borderwidth: 1,
+      }
+    : undefined;
+
   if (dimensions === 3) {
     return {
       paper_bgcolor: "rgba(0,0,0,0)",
       plot_bgcolor: "rgba(0,0,0,0)",
-      margin: { l: 0, r: 0, b: 0, t: 48 },
+      margin: { l: 0, r: 0, b: 0, t: showLegend ? 72 : 48 },
       title: { text: title, font: { family: "Space Grotesk, sans-serif", size: 18 } },
       scene: {
         bgcolor: "rgba(255,255,255,0.18)",
@@ -298,14 +438,15 @@ function buildPlotLayout(dimensions, title) {
         zaxis: { title: "Component 3", gridcolor: "rgba(0,0,0,0.08)" },
         camera: { eye: { x: 1.35, y: 1.25, z: 0.95 } },
       },
-      showlegend: false,
+      showlegend: showLegend,
+      legend,
     };
   }
 
   return {
     paper_bgcolor: "rgba(0,0,0,0)",
     plot_bgcolor: "rgba(0,0,0,0)",
-    margin: { l: 52, r: 24, b: 52, t: 48 },
+    margin: { l: 52, r: 24, b: 52, t: showLegend ? 72 : 48 },
     title: { text: title, font: { family: "Space Grotesk, sans-serif", size: 18 } },
     xaxis: {
       title: "Component 1",
@@ -317,7 +458,8 @@ function buildPlotLayout(dimensions, title) {
       zeroline: false,
       gridcolor: "rgba(0,0,0,0.08)",
     },
-    showlegend: false,
+    showlegend: showLegend,
+    legend,
   };
 }
 
@@ -331,6 +473,28 @@ function renderProjection(target, response, title, isLive = false) {
   });
 }
 
+function renderCompareProjection(target, response) {
+  const wavjepa = response.models.wavjepa;
+  const audioJepa = response.models.audioJepa;
+  const effectiveMethod = response.effectiveMethod || wavjepa.effectiveMethod;
+  const traces = [
+    buildCompareTrace(wavjepa.points, response.dimensions, "wavjepa"),
+    buildCompareTrace(audioJepa.points, response.dimensions, "audioJepa"),
+  ];
+  const layout = buildPlotLayout(
+    response.dimensions,
+    `Compare ${effectiveMethod.toUpperCase()} ${response.dimensions}D`,
+    { showLegend: true },
+  );
+
+  Plotly.react(target, traces, layout, {
+    displayModeBar: false,
+    responsive: true,
+  });
+
+  renderCompareLegend();
+}
+
 function renderPlot() {
   if (!state.response || !window.Plotly) {
     return;
@@ -338,41 +502,33 @@ function renderPlot() {
 
   if (isCompareResponse(state.response)) {
     const wavjepa = state.response.models.wavjepa;
-    const audioJepa = state.response.models.audioJepa;
-    elements.plotGrid.classList.add("compare");
+    const effectiveMethod = state.response.effectiveMethod || wavjepa.effectiveMethod;
+    const live = Boolean(state.response.live);
+    elements.plotGrid.classList.remove("compare");
+    Plotly.purge(elements.comparePlot);
+    renderCompareProjection(elements.plot, state.response);
 
-    renderProjection(
-      elements.plot,
-      wavjepa,
-      `WavJEPA ${wavjepa.effectiveMethod.toUpperCase()} ${wavjepa.dimensions}D`,
-      false,
-    );
-    renderProjection(
-      elements.comparePlot,
-      audioJepa,
-      `Audio-JEPA ${audioJepa.effectiveMethod.toUpperCase()} ${audioJepa.dimensions}D`,
-      false,
-    );
-
-    elements.plotSummary.textContent =
-      `${state.response.pointCount}개 파일을 WavJEPA와 Audio-JEPA 임베딩 공간에 나란히 배치했습니다.`;
+    elements.plotSummary.textContent = live
+      ? `${state.response.pointCount}개 마이크 청크의 두 모델 trajectory를 모델별 ${effectiveMethod.toUpperCase()} ${state.response.dimensions}D 좌표로 정규화해 표시 중입니다.`
+      : `${state.response.pointCount}개 파일의 두 모델 trajectory를 모델별 ${effectiveMethod.toUpperCase()} ${state.response.dimensions}D 좌표로 정규화해 표시했습니다.`;
     elements.projectionMetric.textContent =
-      `Compare ${wavjepa.effectiveMethod.toUpperCase()}/${audioJepa.effectiveMethod.toUpperCase()} ${state.response.dimensions}D`;
+      `${live ? "Live " : ""}Compare ${effectiveMethod.toUpperCase()} ${state.response.dimensions}D`;
     return;
   }
 
   elements.plotGrid.classList.remove("compare");
+  hidePlotLegend();
   Plotly.purge(elements.comparePlot);
 
   const { dimensions, effectiveMethod, pointCount, live } = state.response;
   const title = live
-    ? `Realtime PCA ${dimensions}D Trajectory`
+    ? `${getModelLabel(state.response.modelKey || elements.modelSelect.value)} Realtime PCA ${dimensions}D`
     : `${getModelLabel(elements.modelSelect.value)} ${effectiveMethod.toUpperCase()} ${dimensions}D`;
 
   renderProjection(elements.plot, state.response, title, Boolean(live));
 
   elements.plotSummary.textContent = live
-    ? `${pointCount}개 마이크 청크를 실시간 PCA ${dimensions}D trajectory로 표시 중입니다.`
+    ? `${pointCount}개 마이크 청크를 ${getModelLabel(state.response.modelKey || elements.modelSelect.value)} 실시간 PCA ${dimensions}D trajectory로 표시 중입니다.`
     : `${pointCount}개 파일을 ${effectiveMethod.toUpperCase()} ${dimensions}D 공간에 배치했습니다.`;
   elements.projectionMetric.textContent = `${effectiveMethod.toUpperCase()} ${dimensions}D`;
 }
@@ -400,8 +556,15 @@ async function fetchHealth() {
 }
 
 function attachDropzone() {
-  const assignFiles = (fileList) => {
-    state.files = Array.from(fileList);
+  const assignFiles = async (fileList) => {
+    const selectedFiles = Array.from(fileList);
+
+    if (state.live.active) {
+      await stopMicrophone();
+      setStatus("실시간 마이크를 중지하고 업로드 파일 분석으로 전환했습니다.", "ready");
+    }
+
+    state.files = selectedFiles;
     resetProjectionView();
     syncFileMetric();
     renderFileList();
@@ -416,7 +579,7 @@ function attachDropzone() {
   });
 
   elements.fileInput.addEventListener("change", (event) => {
-    assignFiles(event.target.files);
+    void assignFiles(event.target.files);
   });
 
   ["dragenter", "dragover"].forEach((eventName) => {
@@ -434,7 +597,7 @@ function attachDropzone() {
   });
 
   elements.dropzone.addEventListener("drop", (event) => {
-    assignFiles(event.dataTransfer.files);
+    void assignFiles(event.dataTransfer.files);
   });
 }
 
@@ -580,6 +743,9 @@ async function startMicrophone() {
   renderFileList();
 
   let sessionId = null;
+  const modelMode = elements.modelSelect.value;
+  const modelLabel =
+    modelMode === "compare" ? "두 모델" : getModelLabel(modelMode);
 
   try {
     sessionId = await createLiveSession();
@@ -624,12 +790,13 @@ async function startMicrophone() {
       flushTimer: window.setInterval(flushLiveChunk, 250),
       requestInFlight: false,
       skippedChunks: 0,
+      modelMode,
     };
 
     elements.micButton.textContent = "마이크 중지";
     setLiveBadge("mic on · buffering", "live");
     setStatus(
-      `마이크 입력을 수집 중입니다. ${elements.levelGateSlider.value} dBFS보다 작은 청크는 제외합니다.`,
+      `${modelLabel} 마이크 입력을 수집 중입니다. ${elements.levelGateSlider.value} dBFS보다 작은 청크는 제외합니다.`,
       "busy",
     );
   } catch (error) {
@@ -705,6 +872,7 @@ async function flushLiveChunk() {
     const wavBuffer = encodeWav(samples, state.live.sampleRate);
     formData.append("file", new Blob([wavBuffer], { type: "audio/wav" }), `mic-${chunkIndex}.wav`);
     formData.append("dimensions", elements.dimensionSelect.value);
+    formData.append("model", state.live.modelMode || elements.modelSelect.value);
     formData.append("chunk_index", String(chunkIndex));
     formData.append("elapsed_seconds", elapsedSeconds.toFixed(3));
     formData.append("min_rms_energy", getLiveMinRmsEnergy().toFixed(8));
@@ -742,7 +910,10 @@ async function flushLiveChunk() {
     renderPlot();
     renderFileList();
     setLiveBadge(`mic on · ${payload.pointCount} pts${badgeSuffix}`, "live");
-    setStatus(`실시간 업데이트: ${payload.pointCount}개 청크 누적`, "ready");
+    setStatus(
+      `${getModelLabel(payload.modelKey || state.live.modelMode)} 실시간 업데이트: ${payload.pointCount}개 청크 누적`,
+      "ready",
+    );
   } catch (error) {
     console.error(error);
     await stopMicrophone();
@@ -763,14 +934,15 @@ async function clearLiveCapture() {
 }
 
 async function analyze() {
-  if (state.live.active) {
-    setStatus("배치 업로드 분석 전에는 마이크 실시간 모드를 중지하세요.", "error");
-    return;
-  }
-
   if (!state.files.length) {
     setStatus("먼저 하나 이상의 오디오 파일을 선택하세요.", "error");
     return;
+  }
+
+  if (state.live.active) {
+    setStatus("실시간 마이크를 중지하고 업로드 파일 분석으로 전환하는 중입니다.", "busy");
+    await stopMicrophone();
+    resetProjectionView();
   }
 
   const formData = new FormData();
