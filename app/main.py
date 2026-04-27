@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 import numpy as np
 
 from .services.audio import compute_rms_energy, load_audio_from_bytes
+from .services.audio_jepa import AUDIO_JEPA_SAMPLE_RATE, AudioJEPAService
 from .services.live_sessions import LiveSessionStore
 from .services.wavjepa import (
     WavJEPAService,
@@ -21,15 +22,17 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 DEFAULT_LIVE_MIN_RMS_DBFS = float(os.environ.get("WAVJEPA_LIVE_MIN_RMS_DBFS", "-45.0"))
 DEFAULT_LIVE_MIN_RMS_ENERGY = 10 ** (DEFAULT_LIVE_MIN_RMS_DBFS / 20.0)
+WAVJEPA_SAMPLE_RATE = 16_000
 
 app = FastAPI(
     title="WavJEPA Embedding Explorer",
-    description="Extract WavJEPA embeddings and visualize them in 2D or 3D.",
+    description="Extract WavJEPA and Audio-JEPA embeddings and visualize them in 2D or 3D.",
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 service = WavJEPAService()
+audio_jepa_service = AudioJEPAService()
 live_sessions = LiveSessionStore()
 
 
@@ -47,11 +50,21 @@ async def health() -> dict[str, object]:
     except FileNotFoundError:
         model_info = None
 
+    try:
+        audio_jepa_model_info = audio_jepa_service.describe_artifact()
+    except FileNotFoundError:
+        audio_jepa_model_info = None
+
     return {
         "status": "ok",
         "device": service.device,
         "modelCached": service.is_snapshot_available(),
         "model": model_info,
+        "audioJepa": {
+            "device": audio_jepa_service.device,
+            "modelCached": audio_jepa_service.is_checkpoint_available(),
+            "model": audio_jepa_model_info,
+        },
     }
 
 
@@ -60,6 +73,7 @@ async def create_embeddings(
     files: list[UploadFile] = File(...),
     method: str = Form("pca"),
     dimensions: int = Form(2),
+    model: str = Form("wavjepa"),
 ) -> dict[str, object]:
     if not files:
         raise HTTPException(status_code=400, detail="Upload at least one audio file.")
@@ -69,6 +83,8 @@ async def create_embeddings(
 
     if dimensions not in {2, 3}:
         raise HTTPException(status_code=400, detail="dimensions must be 2 or 3")
+
+    embedding_service, target_sample_rate = resolve_embedding_backend(model)
 
     filenames: list[str] = []
     sample_rates: list[int] = []
@@ -82,8 +98,8 @@ async def create_embeddings(
             raise HTTPException(status_code=400, detail=f"{uploaded_file.filename or 'audio'} is empty.")
 
         try:
-            sample = load_audio_from_bytes(payload)
-            summary = service.embed_waveform(sample.waveform)
+            sample = load_audio_from_bytes(payload, target_sample_rate=target_sample_rate)
+            summary = embedding_service.embed_waveform(sample.waveform)
         except Exception as exc:  # pragma: no cover - runtime failures depend on local env.
             raise HTTPException(
                 status_code=500,
@@ -107,8 +123,101 @@ async def create_embeddings(
         dimensions=dimensions,
         durations=durations,
         sample_rates=sample_rates,
-        model_metadata=service.describe_artifact(),
+        model_metadata=embedding_service.describe_artifact(),
     )
+
+
+@app.post("/api/compare-embeddings")
+async def compare_embeddings(
+    files: list[UploadFile] = File(...),
+    method: str = Form("pca"),
+    dimensions: int = Form(2),
+) -> dict[str, object]:
+    if not files:
+        raise HTTPException(status_code=400, detail="Upload at least one audio file.")
+
+    if method not in {"pca", "tsne"}:
+        raise HTTPException(status_code=400, detail="method must be one of: pca, tsne")
+
+    if dimensions not in {2, 3}:
+        raise HTTPException(status_code=400, detail="dimensions must be 2 or 3")
+
+    filenames: list[str] = []
+    wavjepa_sample_rates: list[int] = []
+    audio_jepa_sample_rates: list[int] = []
+    wavjepa_durations: list[float] = []
+    audio_jepa_durations: list[float] = []
+    wavjepa_summaries = []
+    audio_jepa_summaries = []
+
+    for uploaded_file in files:
+        payload = await uploaded_file.read()
+
+        if not payload:
+            raise HTTPException(status_code=400, detail=f"{uploaded_file.filename or 'audio'} is empty.")
+
+        try:
+            wavjepa_sample = load_audio_from_bytes(payload, target_sample_rate=WAVJEPA_SAMPLE_RATE)
+            audio_jepa_sample = load_audio_from_bytes(payload, target_sample_rate=AUDIO_JEPA_SAMPLE_RATE)
+            wavjepa_summary = service.embed_waveform(wavjepa_sample.waveform)
+            audio_jepa_summary = audio_jepa_service.embed_waveform(audio_jepa_sample.waveform)
+        except Exception as exc:  # pragma: no cover - runtime failures depend on local env.
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to process {uploaded_file.filename or 'audio'}: {exc}",
+            ) from exc
+
+        filenames.append(uploaded_file.filename or f"audio-{len(filenames) + 1}")
+        wavjepa_sample_rates.append(wavjepa_sample.target_sample_rate)
+        audio_jepa_sample_rates.append(audio_jepa_sample.target_sample_rate)
+        wavjepa_durations.append(wavjepa_sample.duration_seconds)
+        audio_jepa_durations.append(audio_jepa_sample.duration_seconds)
+        wavjepa_summaries.append(wavjepa_summary)
+        audio_jepa_summaries.append(audio_jepa_summary)
+
+    wavjepa_matrix = np.vstack([summary.pooled_embedding for summary in wavjepa_summaries])
+    audio_jepa_matrix = np.vstack([summary.pooled_embedding for summary in audio_jepa_summaries])
+    wavjepa_coordinates, wavjepa_effective_method = project_embeddings(
+        wavjepa_matrix,
+        method=method,
+        dimensions=dimensions,
+    )
+    audio_jepa_coordinates, audio_jepa_effective_method = project_embeddings(
+        audio_jepa_matrix,
+        method=method,
+        dimensions=dimensions,
+    )
+
+    return {
+        "compare": True,
+        "requestedMethod": method,
+        "dimensions": dimensions,
+        "pointCount": len(filenames),
+        "models": {
+            "wavjepa": build_projection_response(
+                filenames=filenames,
+                summaries=wavjepa_summaries,
+                coordinates=wavjepa_coordinates,
+                requested_method=method,
+                effective_method=wavjepa_effective_method,
+                dimensions=dimensions,
+                durations=wavjepa_durations,
+                sample_rates=wavjepa_sample_rates,
+                model_metadata=service.describe_artifact(),
+            ),
+            "audioJepa": build_projection_response(
+                filenames=filenames,
+                summaries=audio_jepa_summaries,
+                coordinates=audio_jepa_coordinates,
+                requested_method=method,
+                effective_method=audio_jepa_effective_method,
+                dimensions=dimensions,
+                durations=audio_jepa_durations,
+                sample_rates=audio_jepa_sample_rates,
+                model_metadata=audio_jepa_service.describe_artifact(),
+            ),
+        },
+    }
 
 
 @app.post("/api/live-sessions")
@@ -197,6 +306,16 @@ def parse_env_flag(name: str, default: bool = False) -> bool:
         return default
 
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def resolve_embedding_backend(model: str) -> tuple[WavJEPAService | AudioJEPAService, int]:
+    if model == "wavjepa":
+        return service, WAVJEPA_SAMPLE_RATE
+
+    if model == "audio-jepa":
+        return audio_jepa_service, AUDIO_JEPA_SAMPLE_RATE
+
+    raise HTTPException(status_code=400, detail="model must be one of: wavjepa, audio-jepa")
 
 
 def run() -> None:

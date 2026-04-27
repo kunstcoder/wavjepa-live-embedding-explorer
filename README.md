@@ -1,11 +1,13 @@
 # WavJEPA Embedding Explorer
 
-`labhamlet/wavjepa-base`를 로컬에 내려받아 오디오 특징을 추출하고, 각 오디오의 mean pooled embedding을 2D/3D 공간에 시각화하는 FastAPI 웹앱입니다.
+`labhamlet/wavjepa-base`와 `ltuncay/Audio-JEPA`를 로컬에 내려받아 오디오 특징을 추출하고, 각 오디오의 mean pooled embedding을 2D/3D 공간에 시각화하는 FastAPI 웹앱입니다.
 
 ## 기능
 
 - Hugging Face `labhamlet/wavjepa-base` 스냅샷 로컬 저장
-- 오디오 업로드 후 WavJEPA feature extraction
+- Hugging Face `ltuncay/Audio-JEPA` `JEPA.ckpt` 로컬 저장
+- 오디오 업로드 후 WavJEPA / Audio-JEPA feature extraction
+- 같은 파일 목록의 WavJEPA / Audio-JEPA 임베딩 side-by-side 비교
 - 브라우저 마이크 입력의 실시간 chunk 기반 feature extraction
 - 오디오별 pooled embedding 생성
 - PCA / t-SNE 기반 2D 또는 3D 시각화
@@ -35,7 +37,31 @@ WAVJEPA_HOST=0.0.0.0 WAVJEPA_PORT=8000 python -m app.main
 - 원격 브라우저의 마이크 실시간 모드는 브라우저 보안 정책 때문에 `HTTPS` 또는 `localhost`에서만 동작합니다.
 - HTTPS가 필요하면 `WAVJEPA_SSL_CERTFILE`, `WAVJEPA_SSL_KEYFILE` 환경변수로 인증서를 지정할 수 있습니다.
 
-## 체크포인트 지원
+## Audio-JEPA 비교
+
+브라우저의 `분석 모델`에서 `Audio-JEPA` 또는 `Compare`를 선택할 수 있습니다.
+
+- `WavJEPA`: 기존 waveform 기반 `labhamlet/wavjepa-base` 단일 시각화
+- `Audio-JEPA`: spectrogram 기반 `ltuncay/Audio-JEPA` 단일 시각화
+- `Compare`: 같은 업로드 파일을 두 모델로 각각 임베딩해 두 plot을 나란히 렌더링
+
+Audio-JEPA는 첫 사용 시 `models/audio-jepa/JEPA.ckpt`로 checkpoint를 내려받습니다. 직접 받은 checkpoint를 쓰려면 다음 환경변수를 지정하면 됩니다.
+
+```bash
+export AUDIO_JEPA_MODEL_SOURCE=/absolute/path/to/JEPA.ckpt
+python -m app.main
+```
+
+기본 repo와 파일명은 각각 `AUDIO_JEPA_MODEL_REPO_ID`, `AUDIO_JEPA_CKPT_FILENAME`로 바꿀 수 있습니다.
+
+```bash
+export AUDIO_JEPA_MODEL_REPO_ID=ltuncay/Audio-JEPA
+export AUDIO_JEPA_CKPT_FILENAME=JEPA.ckpt
+```
+
+Audio-JEPA 입력은 백엔드에서 mono / 32kHz로 맞춘 뒤 log-mel spectrogram으로 변환합니다. `torchaudio`가 설치되어 있으면 Kaldi fbank를 사용하고, 없으면 앱 내 PyTorch fallback 전처리를 사용합니다.
+
+## WavJEPA 체크포인트 지원
 
 앱은 Hugging Face 디렉터리뿐 아니라 PyTorch/Lightning 계열 `.ckpt`, `.pt`, `.pth`, `.bin` 체크포인트도 받을 수 있습니다.
 
@@ -75,7 +101,8 @@ uvicorn app.main:app --reload
 
 ## 비고
 
-- 입력 오디오는 백엔드에서 mono / 16kHz 로 맞춘 뒤 모델에 전달합니다.
+- WavJEPA 입력 오디오는 백엔드에서 mono / 16kHz 로 맞춘 뒤 모델에 전달합니다.
+- Audio-JEPA 입력 오디오는 백엔드에서 mono / 32kHz 로 맞춘 뒤 log-mel spectrogram으로 변환합니다.
 - 첫 추론 시에도 모델이 없으면 자동으로 `models/wavjepa-base` 아래로 다운로드합니다.
 - `.ckpt` 변환은 `labhamlet/wavjepa`의 HEAR 추론 코드 패턴을 참고해 `state_dict`를 정규화합니다.
 - 체크포인트에 optimizer/scheduler state가 섞여 있어도 추론에 필요한 tensor weight만 추려서 변환합니다.

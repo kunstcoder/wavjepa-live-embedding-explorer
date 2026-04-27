@@ -52,7 +52,10 @@ const elements = {
   liveBadge: document.getElementById("liveBadge"),
   micButton: document.getElementById("micButton"),
   methodSelect: document.getElementById("methodSelect"),
+  modelSelect: document.getElementById("modelSelect"),
+  comparePlot: document.getElementById("comparePlot"),
   plot: document.getElementById("plot"),
+  plotGrid: document.getElementById("plotGrid"),
   plotSummary: document.getElementById("plotSummary"),
   projectionMetric: document.getElementById("projectionMetric"),
   statusCard: document.getElementById("statusCard"),
@@ -118,7 +121,10 @@ function resetProjectionView() {
 
   if (window.Plotly) {
     Plotly.purge(elements.plot);
+    Plotly.purge(elements.comparePlot);
   }
+
+  elements.plotGrid.classList.remove("compare");
 }
 
 function resetLiveBuffers() {
@@ -126,6 +132,26 @@ function resetLiveBuffers() {
   state.live.bufferedSamples = 0;
   state.live.chunkIndex = 0;
   state.live.sentSamples = 0;
+}
+
+function isCompareResponse(response) {
+  return Boolean(response?.compare && response.models?.wavjepa && response.models?.audioJepa);
+}
+
+function getModelLabel(modelKey) {
+  if (modelKey === "audio-jepa" || modelKey === "audioJepa") {
+    return "Audio-JEPA";
+  }
+
+  if (modelKey === "compare") {
+    return "Compare";
+  }
+
+  return "WavJEPA";
+}
+
+function formatCoordinates(point) {
+  return point.coordinates.map((value) => value.toFixed(3)).join(", ");
 }
 
 function renderFileList() {
@@ -139,6 +165,37 @@ function renderFileList() {
     const names = state.files.map((file) => file.name).join(", ");
     elements.fileList.className = "file-list empty";
     elements.fileList.textContent = `선택됨: ${names}`;
+    return;
+  }
+
+  if (isCompareResponse(state.response)) {
+    const wavPoints = state.response.models.wavjepa.points;
+    const audioPoints = state.response.models.audioJepa.points;
+
+    elements.fileList.className = "file-list";
+    elements.fileList.innerHTML = wavPoints
+      .map((point, index) => {
+        const audioPoint = audioPoints[index];
+
+        return `
+          <article class="file-item">
+            <div class="file-header">
+              <strong>${escapeHtml(point.label)}</strong>
+              <span class="color-chip" style="background:${getColor(index)}"></span>
+            </div>
+            <div class="file-meta">
+              <span>WavJEPA coords=${formatCoordinates(point)}</span>
+              <span>WavJEPA steps=${point.temporalSteps}</span>
+              <span>WavJEPA norm=${point.pooledNorm}</span>
+              <span>Audio-JEPA coords=${formatCoordinates(audioPoint)}</span>
+              <span>Audio-JEPA steps=${audioPoint.temporalSteps}</span>
+              <span>Audio-JEPA norm=${audioPoint.pooledNorm}</span>
+              <span>duration=${point.durationSeconds}s</span>
+            </div>
+          </article>
+        `;
+      })
+      .join("");
     return;
   }
 
@@ -157,7 +214,7 @@ function renderFileList() {
             <span class="color-chip" style="background:${getColor(index)}"></span>
           </div>
           <div class="file-meta">
-            <span>coords=${point.coordinates.map((value) => value.toFixed(3)).join(", ")}</span>
+            <span>coords=${formatCoordinates(point)}</span>
             <span>duration=${point.durationSeconds}s</span>
             <span>steps=${point.temporalSteps}</span>
             <span>dim=${point.embeddingDim}</span>
@@ -227,55 +284,92 @@ function buildTrace(points, dimensions, isLive) {
   };
 }
 
+function buildPlotLayout(dimensions, title) {
+  if (dimensions === 3) {
+    return {
+      paper_bgcolor: "rgba(0,0,0,0)",
+      plot_bgcolor: "rgba(0,0,0,0)",
+      margin: { l: 0, r: 0, b: 0, t: 48 },
+      title: { text: title, font: { family: "Space Grotesk, sans-serif", size: 18 } },
+      scene: {
+        bgcolor: "rgba(255,255,255,0.18)",
+        xaxis: { title: "Component 1", gridcolor: "rgba(0,0,0,0.08)" },
+        yaxis: { title: "Component 2", gridcolor: "rgba(0,0,0,0.08)" },
+        zaxis: { title: "Component 3", gridcolor: "rgba(0,0,0,0.08)" },
+        camera: { eye: { x: 1.35, y: 1.25, z: 0.95 } },
+      },
+      showlegend: false,
+    };
+  }
+
+  return {
+    paper_bgcolor: "rgba(0,0,0,0)",
+    plot_bgcolor: "rgba(0,0,0,0)",
+    margin: { l: 52, r: 24, b: 52, t: 48 },
+    title: { text: title, font: { family: "Space Grotesk, sans-serif", size: 18 } },
+    xaxis: {
+      title: "Component 1",
+      zeroline: false,
+      gridcolor: "rgba(0,0,0,0.08)",
+    },
+    yaxis: {
+      title: "Component 2",
+      zeroline: false,
+      gridcolor: "rgba(0,0,0,0.08)",
+    },
+    showlegend: false,
+  };
+}
+
+function renderProjection(target, response, title, isLive = false) {
+  const trace = buildTrace(response.points, response.dimensions, isLive);
+  const layout = buildPlotLayout(response.dimensions, title);
+
+  Plotly.react(target, [trace], layout, {
+    displayModeBar: false,
+    responsive: true,
+  });
+}
+
 function renderPlot() {
   if (!state.response || !window.Plotly) {
     return;
   }
 
-  const { dimensions, effectiveMethod, points, pointCount, live } = state.response;
-  const trace = buildTrace(points, dimensions, Boolean(live));
+  if (isCompareResponse(state.response)) {
+    const wavjepa = state.response.models.wavjepa;
+    const audioJepa = state.response.models.audioJepa;
+    elements.plotGrid.classList.add("compare");
+
+    renderProjection(
+      elements.plot,
+      wavjepa,
+      `WavJEPA ${wavjepa.effectiveMethod.toUpperCase()} ${wavjepa.dimensions}D`,
+      false,
+    );
+    renderProjection(
+      elements.comparePlot,
+      audioJepa,
+      `Audio-JEPA ${audioJepa.effectiveMethod.toUpperCase()} ${audioJepa.dimensions}D`,
+      false,
+    );
+
+    elements.plotSummary.textContent =
+      `${state.response.pointCount}개 파일을 WavJEPA와 Audio-JEPA 임베딩 공간에 나란히 배치했습니다.`;
+    elements.projectionMetric.textContent =
+      `Compare ${wavjepa.effectiveMethod.toUpperCase()}/${audioJepa.effectiveMethod.toUpperCase()} ${state.response.dimensions}D`;
+    return;
+  }
+
+  elements.plotGrid.classList.remove("compare");
+  Plotly.purge(elements.comparePlot);
+
+  const { dimensions, effectiveMethod, pointCount, live } = state.response;
   const title = live
     ? `Realtime PCA ${dimensions}D Trajectory`
-    : `${effectiveMethod.toUpperCase()} ${dimensions}D Projection`;
+    : `${getModelLabel(elements.modelSelect.value)} ${effectiveMethod.toUpperCase()} ${dimensions}D`;
 
-  const layout =
-    dimensions === 3
-      ? {
-          paper_bgcolor: "rgba(0,0,0,0)",
-          plot_bgcolor: "rgba(0,0,0,0)",
-          margin: { l: 0, r: 0, b: 0, t: 48 },
-          title: { text: title, font: { family: "Space Grotesk, sans-serif", size: 18 } },
-          scene: {
-            bgcolor: "rgba(255,255,255,0.18)",
-            xaxis: { title: "Component 1", gridcolor: "rgba(0,0,0,0.08)" },
-            yaxis: { title: "Component 2", gridcolor: "rgba(0,0,0,0.08)" },
-            zaxis: { title: "Component 3", gridcolor: "rgba(0,0,0,0.08)" },
-            camera: { eye: { x: 1.35, y: 1.25, z: 0.95 } },
-          },
-          showlegend: false,
-        }
-      : {
-          paper_bgcolor: "rgba(0,0,0,0)",
-          plot_bgcolor: "rgba(0,0,0,0)",
-          margin: { l: 52, r: 24, b: 52, t: 48 },
-          title: { text: title, font: { family: "Space Grotesk, sans-serif", size: 18 } },
-          xaxis: {
-            title: "Component 1",
-            zeroline: false,
-            gridcolor: "rgba(0,0,0,0.08)",
-          },
-          yaxis: {
-            title: "Component 2",
-            zeroline: false,
-            gridcolor: "rgba(0,0,0,0.08)",
-          },
-          showlegend: false,
-        };
-
-  Plotly.react(elements.plot, [trace], layout, {
-    displayModeBar: false,
-    responsive: true,
-  });
+  renderProjection(elements.plot, state.response, title, Boolean(live));
 
   elements.plotSummary.textContent = live
     ? `${pointCount}개 마이크 청크를 실시간 PCA ${dimensions}D trajectory로 표시 중입니다.`
@@ -290,11 +384,13 @@ async function fetchHealth() {
     state.health = health;
 
     elements.deviceMetric.textContent = health.device;
-    elements.cacheMetric.textContent = health.modelCached ? "ready" : "download on first run";
+    const wavCache = health.modelCached ? "wav ready" : "wav pending";
+    const audioCache = health.audioJepa?.modelCached ? "audio ready" : "audio pending";
+    elements.cacheMetric.textContent = `${wavCache} / ${audioCache}`;
     setStatus(
       health.modelCached
-        ? "모델 캐시가 준비되어 있습니다."
-        : "모델 캐시가 없습니다. 첫 추론 시 Hugging Face snapshot을 다운로드합니다.",
+        ? "WavJEPA 모델 캐시가 준비되어 있습니다. Audio-JEPA는 선택 시 ckpt 캐시를 확인합니다."
+        : "WavJEPA 모델 캐시가 없습니다. 첫 추론 시 Hugging Face snapshot을 다운로드합니다.",
       "ready",
     );
   } catch (error) {
@@ -375,6 +471,12 @@ function getLiveChunkSampleCount() {
 
 function getLiveMinRmsEnergy() {
   return dbfsToAmplitude(Number(elements.levelGateSlider.value));
+}
+
+function syncModelUI() {
+  const label = getModelLabel(elements.modelSelect.value);
+  elements.analyzeButton.textContent =
+    elements.modelSelect.value === "compare" ? "두 모델 임베딩 비교" : `${label} 임베딩 시각화`;
 }
 
 function pushAudioBuffer(buffer) {
@@ -675,12 +777,23 @@ async function analyze() {
   state.files.forEach((file) => formData.append("files", file));
   formData.append("method", elements.methodSelect.value);
   formData.append("dimensions", elements.dimensionSelect.value);
+  const modelMode = elements.modelSelect.value;
+  const endpoint = modelMode === "compare" ? "/api/compare-embeddings" : "/api/embeddings";
+
+  if (modelMode !== "compare") {
+    formData.append("model", modelMode);
+  }
 
   elements.analyzeButton.disabled = true;
-  setStatus("임베딩을 추출하고 투영 공간을 계산하는 중입니다. 첫 요청은 모델 다운로드 때문에 오래 걸릴 수 있습니다.", "busy");
+  setStatus(
+    modelMode === "compare"
+      ? "두 모델의 임베딩을 추출하고 투영 공간을 계산하는 중입니다. 첫 요청은 모델 다운로드 때문에 오래 걸릴 수 있습니다."
+      : `${getModelLabel(modelMode)} 임베딩을 추출하고 투영 공간을 계산하는 중입니다. 첫 요청은 모델 다운로드 때문에 오래 걸릴 수 있습니다.`,
+    "busy",
+  );
 
   try {
-    const response = await fetch("/api/embeddings", {
+    const response = await fetch(endpoint, {
       method: "POST",
       body: formData,
     });
@@ -707,10 +820,12 @@ elements.analyzeButton.addEventListener("click", analyze);
 elements.micButton.addEventListener("click", startMicrophone);
 elements.clearLiveButton.addEventListener("click", clearLiveCapture);
 elements.levelGateSlider.addEventListener("input", syncLevelGateUI);
+elements.modelSelect.addEventListener("change", syncModelUI);
 
 attachDropzone();
 syncFileMetric();
 syncLevelGateUI();
+syncModelUI();
 renderFileList();
 setLiveBadge("mic off", "idle");
 fetchHealth();
