@@ -8,5 +8,6 @@ scipy==1.13.1
 soundfile==0.13.1
 safetensors==0.5.2
 torch==2.5.1
+torchaudio==2.5.1
 transformers==4.53.2
 uvicorn[standard]==0.34.0

@@ -460,6 +460,23 @@ select {
   border: 1px solid var(--line);
 }
 
+.plot-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.plot-grid.compare {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.compare-plot {
+  display: none;
+}
+
+.plot-grid.compare .compare-plot {
+  display: block;
+}
+
 .table-panel {
   margin-top: 20px;
 }
@@ -513,7 +530,8 @@ select {
 
 @media (max-width: 1080px) {
   .hero,
-  .workspace {
+  .workspace,
+  .plot-grid.compare {
     grid-template-columns: 1fr;
   }
 
